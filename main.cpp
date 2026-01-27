@@ -1,247 +1,223 @@
-#include <fstream>
+#include <cstdio>
 #include <iostream>
+#include <iterator>
+#include <map>
 #include <vector>
-#include <string_view>
+#include <set>
 #include "Lexer.hpp"
+#include "LexerBuilder.hpp"
+#include "LexerDefs.hpp"
+#include "LexerSources.hpp"
+#include "Parser.hpp"
 
-class StringSource : public LexerSource {
-public:
-	StringSource(const char* val) : mStr(val) {
-		
-	}
-
-	StringSource(std::string&& val) : mStr(val) { 
-
-	}
-
-	int peekChar(char& ch) override;
-	int nextChar(char& ch) override;
-	size_t tell() const override;
-	bool seek(size_t pos) override;
-private:
-	size_t mPos = 0;
-	std::string mStr;
+enum ParserStates {
+	ParserStates_stmt = 1000000,
+	ParserStates_expr,
+	ParserStates_term,
+	ParserStates_fact
 };
 
-int StringSource::peekChar(char& ch) {
-	if(mPos >= mStr.size()) {
+int grammar_lexer_implies(const TokenSwitchArgs& args) {
+	bool isBlank = isspace(args.ch) || iscntrl(args.ch) || isblank(args.ch);
+
+	if (args.tokVal == "->" && isBlank) {
+		args.setResultInfo("->", false);
 		return TKN_FINISH;
-	}
-
-	ch = mStr[mPos];
-	return TKN_OK;
-}
-
-int StringSource::nextChar(char& ch) {
-	if(mPos >= mStr.size()) {
-		return TKN_FINISH;
-	}
-	
-	ch = mStr[mPos];
-	++mPos;
-
-	return TKN_OK;
-}
-
-size_t StringSource::tell() const {
-	return mPos;
-}
-
-bool StringSource::seek(size_t pos) {
-	if (pos > mStr.size()) {
-		pos = mStr.size();
-	}
-	mPos = pos;
-	return true;
-}
-
-std::string opChars = "+-*/:;,!@#%^&()[]{}.~'";
-
-enum TokenStates {
-	token_none,
-	token_plus = 1,
-	token_minus,
-	token_mul,
-	token_div,
-	token_semicolon,
-	token_dot_comma,
-	token_comma,
-	token_not,
-	token_at,
-	token_sharp,
-	token_perc,
-	token_circ,
-	token_and,
-	token_bracket_open,
-	token_bracket_close,
-	token_sqr_open,
-	token_sqr_close,
-	token_brace_open,
-	token_brace_close,
-	token_dot,
-	token_tilda,
-	token_symbol,
-	token_integer,
-	token_real,
-	token_apostrophe,
-	token_lexer_end
-};
-
-int opIds[] {
-	token_plus,
-	token_minus,
-	token_mul,
-	token_div,
-	token_semicolon,
-	token_dot_comma,
-	token_comma,
-	token_not,
-	token_at,
-	token_sharp,
-	token_perc,
-	token_circ,
-	token_and,
-	token_bracket_open,
-	token_bracket_close,
-	token_sqr_open,
-	token_sqr_close,
-	token_brace_open,
-	token_brace_close,
-	token_dot,
-	token_tilda
-};
-
-bool isOperator(char ch) {
-	return opChars.find(ch) != std::string::npos;
-}
-
-int start_switch(const TokenSwitchArgs& args) {
-	if (isspace(args.ch)) {
-		return TKN_SKIP;
-	}
-	
-	if(iscntrl(args.ch)) {
-		return TKN_SKIP;
-	}
-
-	if(isdigit(args.ch)) {
-		args.setState(token_integer);
-		return TKN_OK;
-	}
-
-	if(isalpha(args.ch)) {
-		args.setState(token_symbol);
-		return TKN_OK;
-	}
-
-	size_t opId  = opChars.find(args.ch);
-	
-	if(opId == std::string::npos) {
+	} else if (args.tokVal == "->") {
+		args.msg = "Unexpected character next to '->'";
 		return TKN_ERR;
-	} else {
-		args.setState(token_lexer_end);
-		args.setResultInfo(std::string(&args.ch, 1).c_str(), false);
+	}
+
+	if (isBlank) {
+		return TKN_SKIP;
+	}
+
+	if(args.tokVal.empty() && args.ch == '-') {
 		return TKN_OK;
 	}
+
+	if (args.tokVal == "-" && args.ch == '>') {
+		return TKN_OK;
+	}
+
 	
-	return TKN_OK;
+	args.msg = "Expected '->'";
+	return TKN_ERR;
 }
 
-int symbol_switch(const TokenSwitchArgs& args) {
-	if(isalnum(args.ch)) {
-		return TKN_OK;
-	}
+struct RawRule {
+	Token lhs;
+	std::vector<Token> rhs;
+};
 
-	if(isspace(args.ch) || iscntrl(args.ch) || isOperator(args.ch)) {	
-		args.setResultInfo("symbol", true);
-		return TKN_FINISH;
-	}
-	
-	return TKN_OK;
-}
+struct LRItem {
+    int ruleIndex;
+    int dotPos;
+    int lookaheadId;
 
-int integer_switch(const TokenSwitchArgs& args) {
-	if(isdigit(args.ch)) {
-		return TKN_OK;
-	}
-
-	if(args.ch == '.') {
-        args.setState(token_real);
-        return TKN_OK;
+    bool operator<(const LRItem& other) const {
+        if (ruleIndex != other.ruleIndex) return ruleIndex < other.ruleIndex;
+        if (dotPos != other.dotPos) return dotPos < other.dotPos;
+        return lookaheadId < other.lookaheadId;
     }
+};
 
-	if(isspace(args.ch) || iscntrl(args.ch) || isOperator(args.ch)) {
-		args.setResultInfo("int", true);
-		return TKN_FINISH;
-	}
+using StateSet = std::set<LRItem>;
 
-	return TKN_ERR;
+void applyClosure(StateSet& set, const std::vector<RawRule>& rules) {
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        StateSet currentSet = set; 
+        for (const auto& item : currentSet) {
+            const RawRule& rule = rules[item.ruleIndex];
+            
+            if (item.dotPos < rule.rhs.size()) {
+                const Token& nextSymbol = rule.rhs[item.dotPos];
+
+                if (nextSymbol.info()->category == TokenCategory_nonterm) {
+                    std::vector<Token> beta;
+                    for (size_t i = item.dotPos + 1; i < rule.rhs.size(); ++i) {
+                        beta.push_back(rule.rhs[i]);
+                    }
+                    
+                    //TODO: std::set<int> firstSet = computeFirst(beta, item.lookaheadId, rules);
+
+                    // for (int i = 0; i < rules.size(); ++i) {
+                    //     if (rules[i].lhs.info()->id == nextSymbol.info()->id) {
+                    //         for (int lookahead : firstSet) {
+                    //             LRItem newItem{ .ruleIndex = i, .dotPos = 0, .lookaheadId = lookahead };
+                    //             if (set.insert(newItem).second) {
+                    //                 changed = true;
+                    //             }
+                    //         }
+                    //     }
+                    // }
+                }
+            }
+        }
+    }
 }
 
-int real_switch(const TokenSwitchArgs& args) {
-	if(isdigit(args.ch)) {
-		return TKN_OK;
-	}
-
-	if(isspace(args.ch) || iscntrl(args.ch) || isOperator(args.ch)) {
-		args.setResultInfo("real", true);
-		return TKN_FINISH;
-	}
-
-	return TKN_ERR;
+StateSet computeGoto(const StateSet& current, int symbolId, const std::vector<RawRule>& rules) {
+    StateSet nextState;
+    for (const auto& item : current) {
+        const auto& rule = rules[item.ruleIndex];
+        if (item.dotPos < rule.rhs.size() && rule.rhs[item.dotPos].info()->id == symbolId) {
+            nextState.insert({item.ruleIndex, item.dotPos + 1});
+        }
+    }
+    applyClosure(nextState, rules);
+    return nextState;
 }
 
-int finish_switch(const TokenSwitchArgs& args) {	
-	return TKN_FINISH;
-}
+void parseGrammar() {
+	const char* grammar[] = {
+		"S -> E",
+		"E -> T + E",
+		"E -> T",
+		"T -> int"		
+	};
 
-void initStaticTokens(Lexer& lexer) {
-	lexer.addStatic("+", {
-		.id = token_plus
+	LexerBuilder gramLexerBuilder;
+	gramLexerBuilder.addStatic("->", {
+		.id = token_op
+	});
+	gramLexerBuilder.addDynamic("id", {
+		.id = token_id
+	});
+	gramLexerBuilder.addStatic("int", {
+		.id = token_integer
+	});
+	gramLexerBuilder.addStatic("NONE", {
+		.id = token_none
+	});
+	gramLexerBuilder.addStatic("S", {
+		.id = ParserStates_stmt,
+		.category = TokenCategory_nonterm
+	});
+	gramLexerBuilder.addStatic("E", {
+		.id = ParserStates_expr,
+		.category = TokenCategory_nonterm
+	});
+	gramLexerBuilder.addStatic("T", {
+		.id = ParserStates_term,
+		.category = TokenCategory_nonterm
+	});
+	gramLexerBuilder.addStatic("F", {
+		.id = ParserStates_fact,
+		.category = TokenCategory_nonterm
 	});
 
-	lexer.addStatic("-", {
-		.id = token_minus
+	gramLexerBuilder.addState(token_id, lexer_def_symbol_switch);
+	gramLexerBuilder.addState(token_op, grammar_lexer_implies);
+	gramLexerBuilder.addState(token_any, lexer_any_visible_switch);
+
+	Lexer lexer = gramLexerBuilder.build();
+	LexerResultInfo resultInfo;
+	
+	std::vector<RawRule> ruleArr;
+	StateSet stateSet;
+	for (int i = 0 ; i < std::size(grammar); ++i) {
+		StringSource source(grammar[i]);
+		
+		Token lhs;
+		lexer.next({
+			.token = lhs,
+			.source = source,
+			.debug = resultInfo,
+			.initState = token_id,
+		});
+	
+		Token imp;
+		lexer.next({
+			.token = imp,
+			.source = source,
+			.debug = resultInfo,
+			.initState = token_op,
+		});
+	
+		Token rhs;
+		std::vector<Token> rhsVec;
+		while (TKN_OK == lexer.next({
+			.token = rhs,
+			.source = source,
+			.debug = resultInfo,
+			.initState = token_any,
+		})) {
+			rhsVec.emplace_back(rhs);
+		}		
+		
+		ruleArr.emplace_back(RawRule {
+			.lhs = lhs,
+			.rhs = std::move(rhsVec)
+		});
+	}
+
+	stateSet.emplace(LRItem {
+		.ruleIndex = 0, 
+		.dotPos = 0,
 	});
 
-	lexer.addStatic("*", {
-		.id = token_mul
-	});
+	applyClosure(stateSet, ruleArr);
 
-	lexer.addStatic("/", {
-		.id = token_div
-	});
+	printf("");
 }
 
 int main() {
+	parseGrammar();
 	StringSource src("1343+0.434+gffg+4");
-	Lexer lexer;
-
-	lexer.addSwitch(token_none, start_switch);
-	lexer.addSwitch(token_symbol, symbol_switch);
-	lexer.addSwitch(token_integer, integer_switch);
-	lexer.addSwitch(token_real, real_switch);
-
-	lexer.addSwitch(token_lexer_end, finish_switch);
-	
-	initStaticTokens(lexer);
-
-	lexer.addDynamic("int", {
-		.id = token_integer
-	});
-
-	lexer.addDynamic("real", {
-		.id = token_real
-	});
-
-	lexer.addDynamic("symbol", {
-		.id = token_symbol
-	});
+	LexerBuilder builder;
+	Lexer lexer = builder.withDefaultStates().withStandardOperators().build();
 	
 	LexerResultInfo resultInfo;
 	Token token;
-	while(lexer.next(token, src, resultInfo) == TKN_OK) {
+
+	while(lexer.next({
+		.token = token,
+		.source = src,
+		.debug = resultInfo,
+	}) == TKN_OK) {
 		std::cout << token.info()->id << ' ' << token.value() << std::endl;
 	}
-
 }

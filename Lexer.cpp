@@ -2,8 +2,12 @@
 
 bool TokenSwitchArgs::setResultInfo(const char* name, bool isDyn) const {
 	const TokenInfo* token = lexer->getTokenInfo(name, isDyn);
+
+	if (!token) {
+		return false;
+	}
 	resultInfo = token;
-	return false;
+	return true;
 }
 
 int Lexer::callCheckers(const TokenSwitchArgs& args) {
@@ -14,6 +18,7 @@ int Lexer::callCheckers(const TokenSwitchArgs& args) {
 			this,
 			args.state,
 			args.tokVal,
+			args.msg,
 			args.resultInfo,
 			args.ch,
 		});
@@ -25,15 +30,20 @@ int Lexer::callCheckers(const TokenSwitchArgs& args) {
 	return mCheckers.size() > 0 ? TKN_OK : TKN_ERR;
 }
 
-int Lexer::next(Token& token, LexerSource& source, LexerResultInfo& debug) {
+int Lexer::next(const LexerInputArgs& args) {
 	int status = TKN_OK;
 	char currCh = 0;
-	TokenID state = 0;
+	TokenID state = args.initState;
 	const TokenInfo* resultInfo = nullptr;
 	TokenVal result;
+	LexerMsg msg;
 
 	size_t col = 0;
 	size_t line = 0;
+
+	Token& token = args.token;
+	LexerSource& source = args.source;
+	LexerResultInfo& debug = args.debug;
 
 	col = debug.col;
 	line = debug.line;
@@ -73,9 +83,14 @@ int Lexer::next(Token& token, LexerSource& source, LexerResultInfo& debug) {
 			this,
 			state,
 			result,
+			msg,
 			resultInfo,
 			currCh,
 		});
+
+		if (checkerStatus == TKN_ERR) {
+			return TKN_ERR;
+		}
 
 		if(checkerStatus == TKN_SKIP) {
 			source.nextChar(currCh);
@@ -116,16 +131,21 @@ int Lexer::next(Token& token, LexerSource& source, LexerResultInfo& debug) {
 			col = 0;
 			++line;
 		}
+
+		if (currCh == '\0') {
+			break;
+		}
+
 		result += currCh;
 	}
 
 	return TKN_FINISH;
 }
 
-int Lexer::peek(Token& token, LexerSource& source, LexerResultInfo& debug) {
-	size_t srcOff = source.tell();
-	int status = next(token, source, debug);
-	source.seek(srcOff);
+int Lexer::peek(const LexerInputArgs& args) {
+	size_t srcOff = args.source.tell();
+	int status = next(args);
+	args.source.seek(srcOff);
 	return status;	
 }
 

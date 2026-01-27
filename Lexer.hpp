@@ -1,6 +1,7 @@
 #ifndef LEXER_HPP
 #define LEXER_HPP
 
+#include "LexerDefs.hpp"
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -16,6 +17,7 @@ class Lexer;
 
 using TokenID = long long;
 using TokenVal = std::string;
+using LexerMsg = std::string;
 
 struct TokenInfo {
 	TokenID id = TKN_NO_ID;
@@ -29,12 +31,14 @@ struct LexerResultInfo {
 	const TokenInfo* tokenInfo{};
 	TokenID state{};
 	TokenVal curResult{};
+	LexerMsg message{};
 };
 
 struct TokenSwitchArgs {
 	Lexer* lexer{};
 	TokenID& state;
 	TokenVal& tokVal;
+	LexerMsg& msg;
 	const TokenInfo*& resultInfo;
 	char ch;
 
@@ -86,14 +90,21 @@ public:
 
 private:
 	const TokenInfo* mInfo;
-	TokenVal mVal;
-	size_t mFlags;
+	TokenVal mVal{};
+	size_t mFlags{};
+};
+
+struct LexerInputArgs {
+	Token& token; 
+	LexerSource& source; 
+	LexerResultInfo& debug;
+	int initState = token_none;
 };
 
 class Lexer {
 public:
-	int next(Token& token, LexerSource& source, LexerResultInfo& debug);
-	int peek(Token& token, LexerSource& source, LexerResultInfo& debug);
+	int next(const LexerInputArgs& args);
+	int peek(const LexerInputArgs& args);
 	void addSwitch(TokenID state, TokenSwitch checker);
 	
 	int callCheckers(const TokenSwitchArgs& info);
