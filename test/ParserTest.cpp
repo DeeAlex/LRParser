@@ -4,8 +4,6 @@
 #include <ParserBuilder.hpp>
 #include <stack>
 
-std::map<TokenID, std::set<TokenID>> firstSets;
-
 enum RuleOpTags {
 	RuleOpTags_none,
 	RuleOpTags_plus,
@@ -53,7 +51,7 @@ public:
 			mStack.pop();
 			double a = mStack.top();
 			mStack.pop();
-			mStack.push(a * b);
+			mStack.push(a / b);
 		}
 
 		if (rule.tag == RuleOpTags_pow) {
@@ -96,7 +94,7 @@ TEST(Parser, ExprTest) {
 
 	Parser parser = parserBuilder.initGrammarLexer().loadGrammar(grammar).build();
 
-	StringSource src("5*2+10*5-4^2");
+	StringSource src("5/2+10*5-4^2");
 	LexerBuilder builder;
 	Lexer lexerTest = builder.withDefaultStates().withStandardOperators().build();
 	TestValueStack valueStack;
@@ -112,5 +110,5 @@ TEST(Parser, ExprTest) {
 
 	}
 
-    EXPECT_EQ(44, valueStack.getTop());
+    EXPECT_EQ(36.5, valueStack.getTop());
 }
