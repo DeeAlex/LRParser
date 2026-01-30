@@ -1,12 +1,30 @@
 #include "Parser.hpp"
+#include "Lexer.hpp"
+
+Parser& Parser::operator=(Parser&& parser) {
+    mActionTable = std::move(parser.mActionTable);
+    mGotoTable = std::move(parser.mGotoTable);
+    mGrammarRules = std::move(parser.mGrammarRules);
+    mStateStack = std::move(parser.mStateStack);
+    return *this;
+}
 
 int Parser::parseNext(const ParserInputArgs& args) {
     Lexer& lexer = args.lexer; 
     Token tok;
-    lexer.peek({
+    int status = lexer.peek({
         tok, args.source, args.lexerResInfo
     });
-    TokenID tokenId = tok.info()->id; 
+
+    TokenID tokenId = token_lexer_end;
+
+    if (status == TKN_OK) {
+        tokenId = tok.info()->id; 
+    }
+
+    if (status == TKN_ERR) {
+        return ParseStatus_err;
+    }
 
     if (mStateStack.empty()) {
         mStateStack.push_back(args.startState); 
@@ -29,7 +47,9 @@ int Parser::parseNext(const ParserInputArgs& args) {
     switch (action.type) {
         case ParserActType_shift: {
             mStateStack.push_back(action.value);
+            
             lexer.next({tok, args.source, args.lexerResInfo});
+            args.valueStack.pushTerm(tok);
             return ParseStatus_ok;
         }
 
@@ -38,13 +58,15 @@ int Parser::parseNext(const ParserInputArgs& args) {
                 return ParseStatus_err;
             }
 
-            const auto& rule = mGrammarRules[action.value]; 
+            const GrammarRule& rule = mGrammarRules[action.value]; 
 
             for (size_t i = 0; i < rule.rhsSize; ++i) {
-                if (!mStateStack.empty()) {
+                if (!mStateStack.empty()) {                    
                     mStateStack.pop_back();
                 }
             }
+
+            args.valueStack.pushReduced(rule);
 
             ParserState topState = mStateStack.back();
             auto itGotoRow = mGotoTable.find(topState);
@@ -65,29 +87,8 @@ int Parser::parseNext(const ParserInputArgs& args) {
     }
 }
 
-void Parser::init() {
-    // --- STATE 0 ---
-    // If we see 'id', shift to State 3
-    mActionTable[0][1] = { ParserActType_shift, 3 };
-    // If we see 'E', go to State 1
-    mGotoTable[0][100] = 1;
-    // If we see 'T', go to State 2
-    mGotoTable[0][101] = 2;
-
-    // --- STATE 1 ---
-    // If we see '+', shift to State 4 (State 4 would be E -> E + . T)
-    mActionTable[1][2] = { ParserActType_shift, 4 };
-    // If we see EOF, Accept!
-    mActionTable[1][0] = { ParserActType_accept, 0 };
-
-    // --- STATE 2 (Reduction) ---
-    // Rule: E -> T is Rule ID 1 in your code
-    // In SLR, we reduce if the lookahead is in Follow(E), e.g., '+', or EOF
-    mActionTable[2][2] = { ParserActType_reduce, 1 }; 
-    mActionTable[2][0] = { ParserActType_reduce, 1 };
-
-    // --- STATE 3 (Reduction) ---
-    // Rule: T -> id is Rule ID 2 (or 1 depending on your index)
-    mActionTable[3][2] = { ParserActType_reduce, 2 };
-    mActionTable[3][0] = { ParserActType_reduce, 2 };
+void Parser::init(ActionTable&& actionTable, GotoTable&& gotoTable, GrammarRuleList&& rules) {
+    mActionTable = std::move(actionTable);
+    mGotoTable = std::move(gotoTable);
+    mGrammarRules = std::move(rules);
 }
