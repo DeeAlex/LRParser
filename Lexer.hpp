@@ -103,6 +103,15 @@ struct LexerInputArgs {
 
 class Lexer {
 public:
+	Lexer() = default;
+	Lexer(const Lexer& lexer) = default;
+	Lexer(Lexer&& lexer) {
+		operator=(std::move(lexer));
+	}
+
+	Lexer& operator=(const Lexer& lexer) = default;
+	Lexer& operator=(Lexer&& lexer);
+
 	int next(const LexerInputArgs& args);
 	int peek(const LexerInputArgs& args);
 	void addSwitch(TokenID state, TokenSwitch checker);

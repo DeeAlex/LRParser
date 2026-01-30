@@ -1,5 +1,12 @@
 #include "Lexer.hpp"
 
+Lexer& Lexer::operator=(Lexer&& lexer) {
+	mCheckers = std::move(lexer.mCheckers);
+	mDynamicTokens = std::move(lexer.mDynamicTokens);
+	mStaticTokens = std::move(lexer.mStaticTokens);
+	return *this;
+}
+
 bool TokenSwitchArgs::setResultInfo(const char* name, bool isDyn) const {
 	const TokenInfo* token = lexer->getTokenInfo(name, isDyn);
 
