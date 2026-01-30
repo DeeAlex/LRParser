@@ -2,8 +2,9 @@
 #define LEXER_DEFS
 
 enum TokenStates {
-	token_none,
-	token_plus = 1,
+	token_lexer_end = -2,
+	token_none = 0,
+	token_plus,
 	token_minus,
 	token_mul,
 	token_div,
@@ -33,10 +34,10 @@ enum TokenStates {
 	token_less,
 	token_dollar,
     token_vbar,
+	token_or,
     token_op,
     token_any,
     token_new_line,
-	token_lexer_end
 };
 
 enum TokenCategory {
