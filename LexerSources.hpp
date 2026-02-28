@@ -7,7 +7,7 @@ class StringSource : public LexerSource {
 public:
 	StringSource(const char* val) : mStr(val) { }
 	StringSource(const std::string& val) : mStr(val) { }
-	StringSource(std::string&& val) : mStr(val) { }
+	StringSource(std::string&& val) : mStr(std::move(val)) { }
 
 	int peekChar(char& ch) override;
 	int nextChar(char& ch) override;
